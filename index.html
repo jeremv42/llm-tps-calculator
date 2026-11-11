@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM tokens/s calculator</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #667085; --border: #dde1e7;
+  --accent: #2f6fde; --warn-bg: #fff6e0; --warn: #8a5a00; --err-bg: #fdecec; --err: #a12020;
+  --c-dense: #2f6fde; --c-exp: #e08a1e; --c-kv: #2aa876; --c-comm: #a259d9; --c-free: #e9ecf1; --c-draft: #d6457a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111418; --panel: #1a1e24; --text: #e6e8eb; --muted: #9aa3ae; --border: #2c323b;
+    --accent: #6ea0ff; --warn-bg: #3a2e12; --warn: #f2c46b; --err-bg: #3d1717; --err: #ff9a9a;
+    --c-free: #2a3039;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111418; --panel: #1a1e24; --text: #e6e8eb; --muted: #9aa3ae; --border: #2c323b;
+  --accent: #6ea0ff; --warn-bg: #3a2e12; --warn: #f2c46b; --err-bg: #3d1717; --err: #ff9a9a;
+  --c-free: #2a3039;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { padding: 16px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; gap: 12px 24px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+header h1 { margin: 0; font-size: 18px; }
+header p { margin: 4px 0 0; color: var(--muted); }
+.head-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.switch { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: var(--text); cursor: pointer; white-space: nowrap; }
+.switch input { width: auto; margin: 0; }
+main { display: grid; grid-template-columns: minmax(340px, 460px) 1fr; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+section h2 { margin: 0 0 10px; font-size: 15px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.grid.g3 { grid-template-columns: 1fr 1fr 1fr; }
+.grid + .grid, .grid + h2 { margin-top: 10px; }
+label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+label.full { grid-column: 1 / -1; }
+input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; width: 100%; min-width: 0; }
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 5px 10px; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.gpu { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.gpu-head { display: flex; gap: 8px; align-items: end; }
+.gpu-head label { flex: 1; }
+.gpu .grid { margin-top: 8px; }
+.hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.kpi { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.kpi .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.kpi .l { font-size: 12px; color: var(--muted); }
+.kpi .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 5px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-size: 12px; color: var(--muted); font-weight: 500; }
+.scroll { overflow-x: auto; }
+.bar { display: flex; height: 18px; border-radius: 4px; overflow: hidden; background: var(--c-free); }
+.bar > div { height: 100%; }
+.membar { display: grid; grid-template-columns: 150px 1fr 120px; gap: 8px; align-items: center; margin: 6px 0; font-size: 12px; }
+.membar .r { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.msg { padding: 8px 10px; border-radius: 6px; margin: 6px 0; font-size: 13px; }
+.msg.warn { background: var(--warn-bg); color: var(--warn); }
+.msg.err { background: var(--err-bg); color: var(--err); }
+details { margin-top: 6px; } summary { cursor: pointer; font-weight: 600; }
+details p, details li { color: var(--muted); }
+svg text { fill: var(--muted); font-size: 11px; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Advanced settings are hidden unless the header toggle is on */
+body:not(.show-adv) .adv { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>LLM tokens/s calculator</h1>
+    <p>Pick a model and your hardware to estimate local generation speed (llama.cpp-style, memory-bound).</p>
+  </div>
+  <div class="head-actions">
+    <label class="switch"><input type="checkbox" id="advToggle"> Advanced settings</label>
+    <button id="reset">Reset</button>
+  </div>
+</header>
+<main>
+<div id="config">
+  <section>
+    <h2>Model</h2>
+    <div class="grid">
+      <label class="full">Model<select id="modelPreset"></select></label>
+      <label class="full">Quantization<select id="quantPreset"></select></label>
+    </div>
+    <p class="hint" id="modelInfo"></p>
+    <div class="grid adv" id="modelFields">
+      <label>Total parameters (B)<input type="number" step="0.1" data-k="model.total"></label>
+      <label>Active parameters / token (B)<input type="number" step="0.1" data-k="model.active"></label>
+      <label>Always-active dense part (B)<input type="number" step="0.1" data-k="model.dense"></label>
+      <label>Bits / weight (bpw)<input type="number" step="0.01" data-k="model.bpw"></label>
+      <label>Layers<input type="number" step="any" data-k="model.layers"></label>
+      <label>Hidden size<input type="number" step="1" data-k="model.hidden"></label>
+      <label>KV heads<input type="number" step="1" data-k="model.kvHeads"></label>
+      <label>Head dimension<input type="number" step="1" data-k="model.headDim"></label>
+      <label>Sliding-window layers (SWA)<input type="number" step="1" data-k="model.swaLayers"></label>
+      <label>SWA window (tokens)<input type="number" step="128" data-k="model.swaWindow"></label>
+      <label>KV heads (SWA)<input type="number" step="1" data-k="model.swaKvHeads"></label>
+      <label>Head dimension (SWA)<input type="number" step="1" data-k="model.swaHeadDim"></label>
+    </div>
+    <p class="hint adv">Dense part = attention, embeddings, shared experts, router. For a dense model: total = active = dense. The rest is treated as routed experts.</p>
+    <div class="adv">
+      <h2 style="margin-top:12px">MTP (drafter, speculative decoding)</h2>
+      <div class="grid g3">
+        <label>Enabled<select data-k="drafter.on"><option value="false">No</option><option value="true">Yes</option></select></label>
+        <label>Drafter size (B)<input type="number" step="0.01" data-k="drafter.params"></label>
+        <label>Tokens drafted / cycle (k)<input type="number" step="1" min="1" data-k="drafter.k"></label>
+        <label>Acceptance rate (α)<input type="number" step="0.05" min="0" max="0.99" data-k="drafter.alpha"></label>
+        <label>Verify overhead per drafted token (fraction)<input type="number" step="0.01" data-k="drafter.verify"></label>
+      </div>
+      <p class="hint">The drafter reads its own weights for each proposed token, and the main model verifies the k tokens in one pass. α is not published: 0.6–0.8 is a plausible range, to be measured. Gemma 4 drafter sizes are estimates (not published); for other models, fill them in.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Context</h2>
+    <div class="grid">
+      <label>Context size (tokens)<input type="number" step="1024" data-k="ctxAlloc"></label>
+      <label>Tokens already in context<input type="number" step="1024" data-k="ctxFill"></label>
+      <label class="adv">KV cache type<select data-k="kvType">
+        <option value="f16">f16</option><option value="q8_0">q8_0</option><option value="q4_0">q4_0</option>
+      </select></label>
+    </div>
+    <p class="hint">Speed drops as the context fills up. The filled part is also used as the prompt length for the prompt-processing time.</p>
+  </section>
+
+  <section>
+    <h2>Hardware</h2>
+    <div class="grid">
+      <label class="full">Machine type<select id="hwMode"><option value="pc">PC / server: dedicated GPUs + system RAM</option><option value="mac">Unified memory: Apple Silicon or iGPU (mini PC)</option></select></label>
+    </div>
+  </section>
+
+  <section id="secGpu">
+    <h2>GPUs</h2>
+    <div id="gpus"></div>
+    <div class="row-actions"><button class="primary" id="addGpu">+ Add a GPU</button></div>
+    <p class="hint adv">Effective PCIe link = min(GPU gen, slot gen) × min(GPU lanes, slot lanes). E.g. a mechanical x16 slot wired x4 through the chipset → set x4.</p>
+  </section>
+
+  <section id="secRam">
+    <h2>System RAM / CPU</h2>
+    <div class="grid">
+      <label>Capacity (GB)<input type="number" step="1" data-k="ram.size"></label>
+      <label>Type<select data-k="ram.type"><option>DDR4</option><option>DDR5</option><option>LPDDR5X</option></select></label>
+      <label>Speed (MT/s)<input type="number" step="100" data-k="ram.mts"></label>
+      <label>Memory channels<input type="number" step="1" data-k="ram.channels"></label>
+      <label class="adv">Reserved for OS + apps (GB)<input type="number" step="0.5" data-k="ram.reserve"></label>
+      <label class="adv">Effective CPU throughput (GFLOPS)<input type="number" step="50" data-k="cpuGflops"></label>
+      <label class="adv">NVMe disk (GB/s) if overflowing<input type="number" step="0.5" data-k="diskBw"></label>
+      <label class="adv">Theoretical RAM bandwidth<input type="text" id="ramBwOut" disabled></label>
+    </div>
+    <p class="hint">Consumer desktops have 2 channels, however many DIMMs are installed (4 DIMMs ≠ 4 channels). Threadripper/EPYC/Xeon: 4 to 12.</p>
+    <p class="hint adv">CPU GFLOPS: ~300–1500 for a recent desktop with AVX2/AVX-512.</p>
+  </section>
+
+  <section id="secMac" style="display:none">
+    <h2>Unified memory (Apple Silicon / iGPU)</h2>
+    <div class="grid">
+      <label class="full">Chip / machine<select id="macPreset"></select></label>
+      <label>Unified memory (GB)<input type="number" step="8" data-k="mac.mem"></label>
+      <label class="adv">GPU limit (GB, 0 = auto)<input type="number" step="0.5" data-k="mac.wired"></label>
+      <label class="adv">Memory bandwidth (GB/s)<input type="text" id="macBwOut" disabled></label>
+      <label class="adv">GPU compute (TFLOPS)<input type="text" id="macTflopsOut" disabled></label>
+    </div>
+    <p class="hint adv">CPU and GPU share the same memory: no PCIe and no copies between them. Default macOS GPU limit: ~2/3 of RAM (≤ 36 GB) or ~3/4 (above), can be raised with <code>sudo sysctl iogpu.wired_limit_mb</code>. Beyond that, the model overflows to disk (mmap).</p>
+    <p class="hint adv">Bandwidth: official Apple figures (2nd-generation Pro/Max chips and M5 Pro/Max verified; the rest and GPU compute are approximate, notably M5 base, Pro and Max). Mini PC: bandwidth = 2 channels × 8 B × 6400 MT/s ≈ 102 GB/s, the iGPU reads the same RAM as the CPU; set memory and GPU limit to what Windows actually gives the iGPU.</p>
+  </section>
+
+  <section class="adv">
+    <h2>Strategy &amp; efficiencies</h2>
+    <div class="grid">
+      <label class="full">Placement<select data-k="placement">
+        <option value="moe">MoE: attention + KV on GPU, experts last (--n-cpu-moe / -ot exps=CPU)</option>
+        <option value="layer">Whole layers (-ngl / classic tensor-split)</option>
+      </select></label>
+      <label class="full">GPU fill order<select data-k="order">
+        <option value="bw">Fastest first (memory bandwidth)</option>
+        <option value="list">List order</option>
+      </select></label>
+      <label>GPU bandwidth efficiency<input type="number" step="0.05" min="0.1" max="1" data-k="effGpu"></label>
+      <label>RAM bandwidth efficiency<input type="number" step="0.05" min="0.1" max="1" data-k="effRam"></label>
+      <label>PCIe efficiency<input type="number" step="0.05" min="0.1" max="1" data-k="pcieEff"></label>
+      <label>Compute efficiency (prompt processing)<input type="number" step="0.05" min="0.05" max="1" data-k="effPP"></label>
+      <label>Latency per transfer (µs)<input type="number" step="5" data-k="latencyUs"></label>
+      <label>ubatch (prompt processing)<input type="number" step="128" data-k="ubatch"></label>
+    </div>
+    <p class="hint">Typical values: GPU 0.7–0.85 (CUDA), 0.5–0.7 (Vulkan); RAM 0.6–0.75. Latency per transfer covers sync + kernel launches (often 20–80 µs).</p>
+  </section>
+</div>
+
+<div id="results">
+  <section>
+    <h2>Results</h2>
+    <div class="kpis" id="kpis"></div>
+    <div id="msgs"></div>
+  </section>
+  <section>
+    <h2>Memory usage</h2>
+    <div id="mem"></div>
+    <div class="legend"><span><i style="background:var(--c-dense)"></i>Dense weights</span><span><i style="background:var(--c-exp)"></i>Experts</span><span><i style="background:var(--c-kv)"></i>KV cache</span><span><i style="background:var(--c-draft)"></i>MTP drafter</span><span><i style="background:var(--c-free)"></i>Free</span></div>
+  </section>
+  <section>
+    <h2>Time per generated token</h2>
+    <div class="bar" id="timebar" style="height:24px"></div>
+    <div class="legend" id="timelegend"></div>
+    <div class="scroll adv" style="margin-top:10px"><table id="devtable"></table></div>
+  </section>
+  <section>
+    <h2>Generation speed vs. filled context</h2>
+    <div id="chart"></div>
+  </section>
+  <section>
+    <h2>Method</h2>
+    <details>
+      <summary>Formulas used</summary>
+      <ul>
+        <li><b>Size</b>: weights (GB) = parameters (B) × bpw / 8. KV (GB) = 2 × KV heads × head dim × layers × context × bytes/element; for sliding-window layers (SWA), context is replaced by min(context, window). Re-read per token: only the useful part of the KV (filled, or inside the window). Layers that share the KV of an earlier layer (Gemma 3n/4 E2B/E4B) are counted once.</li>
+        <li><b>Active expert fraction</b> f = (active − dense) / (total − dense).</li>
+        <li><b>Placement</b>: greedy fill of the GPUs (capacity = VRAM − reserve), then RAM, then disk (mmap). In MoE mode, attention + KV go first, experts afterwards.</li>
+        <li><b>Generation</b>: for each device, bytes read/token = dense + experts × f + KV × (filled/allocated); time = bytes / (bandwidth × efficiency). On CPU: max(memory time, 2 × active params / GFLOPS). Devices run one after another (layer split), so times add up.</li>
+        <li><b>Transfers</b>: each hop from one device to another costs latency + hidden × 4 B / PCIe throughput. In MoE mode, a layer whose experts live elsewhere than its attention costs 2 transfers.</li>
+        <li><b>Prompt processing</b>: GPUs are compute-bound (2 × active params × token). Weights in RAM are either processed by the CPU or streamed over PCIe to the main GPU (first in the list) for every ubatch, like llama.cpp — the faster of the two is kept. This is where PCIe matters most.</li>
+        <li><b>Quantization</b>: only formats at or below the precision the model was released in are offered (e.g. a model published in 8-bit gains nothing from an F16 conversion).</li>
+      </ul>
+      <p>This is a theoretical ceiling: real numbers are typically 10–30% lower depending on the backend, quantized kernels and system load.</p>
+    </details>
+  </section>
+</div>
+</main>
+
+<script>
+const PCIE_LANE = {1: 0.25, 2: 0.5, 3: 0.985, 4: 1.969, 5: 3.938};
+const KV_BYTES = {f16: 2, q8_0: 1.0625, q4_0: 0.5625};
+
+// Per group: name, vendor, VRAM GB, memory bandwidth GB/s, FP16 tensor TFLOPS (approx.), max PCIe gen, max lanes
+// Workstation / datacenter figures: bandwidth from bus width × memory speed (or vendor HBM figures),
+// TFLOPS dense FP16 (no sparsity), scaled from the consumer sibling when the vendor publishes none. Orders of magnitude.
+const GPU_GROUPS = [
+  ['NVIDIA GeForce', [
+    ['RTX 2060 6 GB', 'nvidia', 6, 336, 52, 3, 16],
+    ['RTX 2070 8 GB', 'nvidia', 8, 448, 60, 3, 16],
+    ['RTX 2080 8 GB', 'nvidia', 8, 448, 81, 3, 16],
+    ['RTX 2080 Ti 11 GB', 'nvidia', 11, 616, 108, 3, 16],
+    ['RTX 3060 12 GB', 'nvidia', 12, 360, 51, 4, 16],
+    ['RTX 3060 Ti 8 GB', 'nvidia', 8, 448, 65, 4, 16],
+    ['RTX 3070 8 GB', 'nvidia', 8, 448, 81, 4, 16],
+    ['RTX 3080 10 GB', 'nvidia', 10, 760, 119, 4, 16],
+    ['RTX 3080 12 GB', 'nvidia', 12, 912, 122, 4, 16],
+    ['RTX 3090 24 GB', 'nvidia', 24, 936, 142, 4, 16],
+    ['RTX 3090 Ti 24 GB', 'nvidia', 24, 1008, 160, 4, 16],
+    ['RTX 4060 8 GB', 'nvidia', 8, 272, 60, 4, 8],
+    ['RTX 4060 Ti 16 GB', 'nvidia', 16, 288, 88, 4, 8],
+    ['RTX 4070 12 GB', 'nvidia', 12, 504, 117, 4, 16],
+    ['RTX 4070 Super 12 GB', 'nvidia', 12, 504, 142, 4, 16],
+    ['RTX 4070 Ti Super 16 GB', 'nvidia', 16, 672, 176, 4, 16],
+    ['RTX 4080 Super 16 GB', 'nvidia', 16, 736, 209, 4, 16],
+    ['RTX 4090 24 GB', 'nvidia', 24, 1008, 330, 4, 16],
+    ['RTX 5060 Ti 16 GB', 'nvidia', 16, 448, 95, 5, 8],
+    ['RTX 5070 12 GB', 'nvidia', 12, 672, 123, 5, 16],
+    ['RTX 5070 Ti 16 GB', 'nvidia', 16, 896, 176, 5, 16],
+    ['RTX 5080 16 GB', 'nvidia', 16, 960, 225, 5, 16],
+    ['RTX 5090 32 GB', 'nvidia', 32, 1792, 419, 5, 16],
+  ]],
+  ['AMD Radeon', [
+    ['RX 6600 8 GB', 'amd', 8, 224, 18, 4, 8],
+    ['RX 6700 XT 12 GB', 'amd', 12, 384, 26, 4, 16],
+    ['RX 6800 16 GB', 'amd', 16, 512, 32, 4, 16],
+    ['RX 6800 XT 16 GB', 'amd', 16, 512, 41, 4, 16],
+    ['RX 6900 XT 16 GB', 'amd', 16, 512, 46, 4, 16],
+    ['RX 7600 8 GB', 'amd', 8, 288, 43, 4, 8],
+    ['RX 7600 XT 16 GB', 'amd', 16, 288, 45, 4, 8],
+    ['RX 7700 XT 12 GB', 'amd', 12, 432, 70, 4, 16],
+    ['RX 7800 XT 16 GB', 'amd', 16, 624, 74, 4, 16],
+    ['RX 7900 GRE 16 GB', 'amd', 16, 576, 92, 4, 16],
+    ['RX 7900 XT 20 GB', 'amd', 20, 800, 103, 4, 16],
+    ['RX 7900 XTX 24 GB', 'amd', 24, 960, 123, 4, 16],
+    ['RX 9060 XT 16 GB', 'amd', 16, 322, 51, 5, 16],
+    ['RX 9070 16 GB', 'amd', 16, 640, 72, 5, 16],
+    ['RX 9070 XT 16 GB', 'amd', 16, 640, 97, 5, 16],
+  ]],
+  ['Intel Arc', [
+    ['Arc A770 16 GB', 'intel', 16, 560, 138, 4, 16],
+    ['Arc B580 12 GB', 'intel', 12, 456, 117, 4, 8],
+  ]],
+  ['Workstation', [
+    ['Quadro RTX 5000 16 GB', 'nvidia', 16, 448, 89, 3, 16],
+    ['Quadro RTX 6000 24 GB', 'nvidia', 24, 672, 130, 3, 16],
+    ['Quadro RTX 8000 48 GB', 'nvidia', 48, 672, 130, 3, 16],
+    ['RTX A4000 16 GB', 'nvidia', 16, 448, 77, 4, 16],
+    ['RTX A4500 20 GB', 'nvidia', 20, 640, 95, 4, 16],
+    ['RTX A5000 24 GB', 'nvidia', 24, 768, 111, 4, 16],
+    ['RTX A6000 48 GB', 'nvidia', 48, 768, 155, 4, 16],
+    ['RTX 4000 Ada 20 GB', 'nvidia', 20, 320, 107, 4, 16],
+    ['RTX 4500 Ada 24 GB', 'nvidia', 24, 432, 158, 4, 16],
+    ['RTX 5000 Ada 32 GB', 'nvidia', 32, 576, 261, 4, 16],
+    ['RTX 6000 Ada 48 GB', 'nvidia', 48, 960, 364, 4, 16],
+    ['RTX PRO 6000 Blackwell 96 GB', 'nvidia', 96, 1792, 500, 5, 16],
+    ['Radeon Pro W7800 32 GB', 'amd', 32, 576, 90, 4, 16],
+    ['Radeon Pro W7900 48 GB', 'amd', 48, 864, 123, 4, 16],
+    ['Arc Pro B60 24 GB', 'intel', 24, 456, 117, 5, 8],
+  ]],
+  ['Datacenter', [
+    ['Tesla P40 24 GB', 'nvidia', 24, 347, 12, 3, 16],
+    ['Tesla P100 16 GB', 'nvidia', 16, 732, 19, 3, 16],
+    ['Tesla V100 16 GB', 'nvidia', 16, 900, 125, 3, 16],
+    ['Tesla V100 32 GB', 'nvidia', 32, 900, 125, 3, 16],
+    ['Tesla T4 16 GB', 'nvidia', 16, 320, 65, 3, 16],
+    ['A10 24 GB', 'nvidia', 24, 600, 125, 4, 16],
+    ['A30 24 GB', 'nvidia', 24, 933, 165, 4, 16],
+    ['A40 48 GB', 'nvidia', 48, 696, 150, 4, 16],
+    ['A100 40 GB', 'nvidia', 40, 1555, 312, 4, 16],
+    ['A100 80 GB', 'nvidia', 80, 2039, 312, 4, 16],
+    ['L4 24 GB', 'nvidia', 24, 300, 121, 4, 16],
+    ['L40 48 GB', 'nvidia', 48, 864, 181, 4, 16],
+    ['L40S 48 GB', 'nvidia', 48, 864, 362, 4, 16],
+    ['H100 PCIe 80 GB', 'nvidia', 80, 2000, 756, 5, 16],
+    ['H100 SXM 80 GB', 'nvidia', 80, 3350, 989, 5, 16],
+    ['H200 141 GB', 'nvidia', 141, 4800, 989, 5, 16],
+    ['B200 180 GB', 'nvidia', 180, 8000, 2250, 5, 16],
+    ['Instinct MI300X 192 GB', 'amd', 192, 5300, 1307, 5, 16],
+  ]],
+];
+// Flat list; last field = group index (−1 for the custom entry, kept first as the manual-entry base)
+const GPU_PRESETS = [['Custom', 'other', 16, 500, 50, 4, 16, -1],
+  ...GPU_GROUPS.flatMap(([, list], gi) => list.map(p => [...p, gi]))];
+
+// name, total B, active B, dense B, layers (full KV), hidden, KV heads, head dim, SWA layers, SWA window, SWA KV heads, SWA head dim
+// (MLA: 1 × 288 ≈ 576 values/layer; layers sharing their KV with an earlier layer are not counted)
+const MODEL_PRESETS = [
+  ['Custom', 30, 30, 30, 48, 5120, 8, 128],
+  ['Qwen3 30B-A3B (MoE)', 30.5, 3.3, 1.5, 48, 2048, 4, 128],
+  ['gpt-oss-20b (MoE)', 20.9, 3.6, 1.13, 24, 2880, 8, 64],
+  ['gpt-oss-120b (MoE)', 116.8, 5.13, 1.53, 36, 2880, 8, 64],
+  ['GLM-4.5-Air 106B-A12B (MoE)', 106, 12, 5.7, 46, 4096, 8, 128],
+  ['GLM-4.6 355B-A32B (MoE)', 355, 32, 15, 92, 5120, 8, 128],
+  ['Kimi K2 1T-A32B (MoE, MLA)', 1000, 32, 11.4, 61, 7168, 1, 288],
+  // Qwen3.6: official config.json. Gated DeltaNet (linear) has no classic KV: only full-attention layers count.
+  // Dense part estimated (attention + shared expert + embeddings): 3B active − 8/256 of the experts ≈ 2B.
+  ['Qwen3.6 35B-A3B (MoE, hybrid)', 35, 3, 2, 10, 2048, 2, 256, 0, 0, 0, 0],
+  ['Qwen3.6 27B (dense, hybrid)', 27, 27, 27, 16, 5120, 4, 256, 0, 0, 0, 0],
+  // Qwen3.5 4B: official config.json (8 full-attention layers out of 32, the rest linear). Tied embeddings included in the 4B.
+  ['Qwen3.5 4B (dense, hybrid)', 4, 4, 4, 8, 2560, 4, 256, 0, 0, 0, 0],
+  // Gemma 4: official config.json files. SWA layers = sliding window (KV bounded by the window).
+  // Gemma 4 26B-A4B: dense (≈ 3.8B active − 8/128 of the experts) estimated, 128 experts / top-8.
+  // Last field: estimated MTP drafter size (4 layers, shares the target's KV/activations), in B. Not published.
+  ['Gemma 4 E2B (dense, PLE)', 5, 2.3, 2.3, 3, 1536, 1, 512, 12, 512, 1, 256, 0.15],
+  ['Gemma 4 E4B (dense, PLE)', 8, 4.5, 4.5, 4, 2560, 2, 512, 20, 512, 2, 256, 0.42],
+  ['Gemma 4 12B (dense)', 12, 12, 12, 8, 3840, 1, 512, 40, 1024, 8, 256, 0.94],
+  ['Gemma 4 31B (dense)', 31, 31, 31, 10, 5376, 4, 512, 50, 1024, 16, 256, 1.85],
+  ['Gemma 4 26B-A4B (MoE)', 26, 3.8, 2.4, 5, 2816, 2, 512, 25, 1024, 8, 256, 0.2],
+  // Mistral (open weights). Small 4: official config (128 experts, 4 active, 1 shared). Dense estimated (active − 4/128 of the experts).
+  ['Mistral Small 4 119B-A6.5B (MoE)', 119, 6.5, 2.9, 36, 4096, 32, 128],
+  // Medium 3.5: dense, official config (88 layers, 8 KV heads).
+  ['Mistral Medium 3.5 128B (dense)', 128, 128, 128, 88, 12288, 8, 128],
+  // Large 3: MLA (kv_lora_rank 512 + rope 64 = 576 values/layer, like DeepSeek). 128 experts, 4 active, 1 shared.
+  // Dense estimated at ~20 B (solved from 675 B total / 41 B active), to be verified.
+  ['Mistral Large 3 675B-A41B (MoE, MLA)', 675, 41, 20.5, 61, 7168, 1, 288],
+  // GLM (Zhipu / Z.ai). Official config: MLA (kv_lora_rank 512 + rope 64 = 576 values/layer), 256 experts, 8 active, 1 shared, first 3 layers dense.
+  // Total and active: secondary sources (GLM-5.2: 753 B / ~40 B; GLM-5: 744 B / 40–44 B). Dense estimated from these values.
+  // GLM-5.3-Flash: 320 B total / 18 B active (Hugging Face card). Config: 45 layers, MLA (kv_lora 512; rope assumed 64), 288 experts, 8 active, 1 shared.
+  // Dense estimated from total and active.
+  ['GLM-5.3-Flash 320B-A18B (MoE, MLA)', 320, 18, 9.4, 45, 4096, 1, 288],
+  // DeepSeek V4.1-Flash (base and 1017): identical official config (40 real layers, 384 experts, 6 active, 1 shared, 1 KV head of dim 512).
+  // Total 763 B (metadata of the 1017 card). Active NOT published: 35 B estimated from the V4-Flash ratio (13/284); dense estimated from there.
+  // Compressed attention: compress_ratios 2 (×18) and 1 (×20) counted as 0.5 and 1 equivalent layers; 2 full layers at the top → 31 equivalent layers.
+  // The "ratio 1 = full attention" assumption is conservative; if it is a 128-token window, the real KV is much smaller.
+  ['DeepSeek V4.1-Flash 763B (MoE, compressed, active est.)', 763, 35, 23, 31, 5120, 1, 512],
+  ['DeepSeek V4.1-Flash-1017 763B (MoE, compressed, active est.)', 763, 35, 23, 31, 5120, 1, 512],
+  // GLM-5.3: same architecture as GLM-5.2 (post-training on its base); 753 B total per the Hugging Face card, active ~40 B (estimated).
+  ['GLM-5.3 753B-A40B (MoE, MLA)', 753, 40, 17, 78, 6144, 1, 288],
+  ['GLM-5.2 753B-A40B (MoE, MLA)', 753, 40, 17, 78, 6144, 1, 288],
+  ['GLM-5 744B-A44B (MoE, MLA)', 744, 44, 21.4, 78, 6144, 1, 288],
+  // DeepSeek V4: compressed attention. Each layer counts for 1/ratio (ratio 0 = full, 4 or 128 depending on the layer): the KV formula is linear,
+  // so fractional "equivalent layers" are used. Flash: 43 layers → 8.16; Pro: 61 layers → 8.5. Sliding window (128) neglected.
+  // Flash: official config (256 experts, 6 active, 1 shared, 284 B / 13 B). Pro: official config (384 experts, 6 active), 1.6 T / 49 B per the card. Dense estimated.
+  ['DeepSeek V4 Flash 284B-A13B (MoE, compressed)', 284, 13, 6.5, 8.16, 4096, 1, 512],
+  ['DeepSeek V4 Pro 1.6T-A49B (MoE, compressed)', 1600, 49, 24.4, 8.5, 7168, 1, 512],
+  // Mistral Large 4: public weights (Mistral Ecosystem licence, modified MIT). Official config: 72 layers, MLA (kv_lora_rank 512 + rope 64),
+  // 128 experts, 4 active, 1 shared. Total ~1000 B, active 49 B (52 B with embeddings). Dense estimated at ~18 B.
+  ['Mistral Large 4 1T-A49B (MoE, MLA)', 1000, 49, 18.3, 72, 6144, 1, 288],
+  // Qwen3.8 (open weights only; Max, Flash and Omni are API-only). Layers = full-attention, KV ignored for linear ones.
+  // Qwen3.8 27B: official config (16 full-attention layers out of 64).
+  ['Qwen3.8 27B (dense, hybrid)', 27, 27, 27, 16, 5120, 4, 256],
+  // Flash-Next: 125B LM + 51B n-gram embeddings (lookup, rarely read) + 4B MTP ignored. Dense estimated (active − 10/512 of the experts).
+  ['Qwen3.8 Flash-Next 176B-A6B (MoE, hybrid, +n-gram)', 176, 6, 3.4, 12, 2560, 2, 256],
+  // 2.4T-A95B: official config (23 full-attention layers out of 92). Dense estimated from 95 B active; does not fit locally.
+  ['Qwen3.8 2.4T-A95B (MoE, hybrid)', 2400, 95, 49, 23, 8192, 4, 256],
+];
+// Sorted by name ("Custom" stays first, it is the manual-entry base)
+MODEL_PRESETS.splice(1, Infinity, ...MODEL_PRESETS.slice(1).sort((a, b) => a[0].localeCompare(b[0], 'en')));
+
+// Precision the weights were released in, when lower than 16-bit (Hugging Face safetensors metadata, checked 2026-11).
+// Models not listed here have an official BF16 release. A quantization above the native precision brings nothing, so it is not offered.
+const NATIVE = {
+  'gpt-oss-20b (MoE)': 'mxfp4', 'gpt-oss-120b (MoE)': 'mxfp4',
+  'Kimi K2 1T-A32B (MoE, MLA)': 'fp8',
+  'Mistral Small 4 119B-A6.5B (MoE)': 'fp8', 'Mistral Medium 3.5 128B (dense)': 'fp8',
+  'DeepSeek V4 Flash 284B-A13B (MoE, compressed)': 'fp8', 'DeepSeek V4 Pro 1.6T-A49B (MoE, compressed)': 'fp8',
+  'DeepSeek V4.1-Flash 763B (MoE, compressed, active est.)': 'fp8',
+  'DeepSeek V4.1-Flash-1017 763B (MoE, compressed, active est.)': 'fp8',
+};
+const NATIVE_INFO = { mxfp4: ['MXFP4 (4-bit)', 4.25], fp8: ['8-bit', 8.5] };
+
+// Unified memory (CPU + GPU on the same RAM): name, bandwidth GB/s, GPU compute TFLOPS (approx., FP32 order), optional vendor (default apple)
+// Apple: official bandwidth for the max configuration; iGPU: bandwidth = theoretical RAM throughput.
+// M5 base/Pro/Max: TFLOPS estimated. M5 Pro/Max bandwidth comes from the press (307 and 614 GB/s).
+const UNIFIED_PRESETS = [
+  ['M1 (8 GPU cores)', 68, 2.6],
+  ['M1 Pro (16 GPU cores)', 200, 5.2],
+  ['M1 Max (32 GPU cores)', 400, 10.4],
+  ['M2 (10 GPU cores)', 100, 3.6],
+  ['M2 Pro (19 GPU cores)', 200, 6.8],
+  ['M2 Max (38 GPU cores)', 400, 13.6],
+  ['M3 (10 GPU cores)', 100, 4.1],
+  ['M3 Pro (18 GPU cores)', 150, 7.4],
+  ['M3 Max (40 GPU cores)', 400, 16.4],
+  ['M4 (10 GPU cores)', 120, 4.3],
+  ['M4 Pro (20 GPU cores)', 273, 9.2],
+  ['M4 Max (40 GPU cores)', 546, 18.4],
+  ['M5 (10 GPU cores)', 153, 4.3],
+  ['M5 Pro (20 GPU cores)', 307, 9.2],
+  ['M5 Max (40 GPU cores)', 614, 18.4],
+  // x86 mini PC: Intel Arc 130T iGPU (7–8 Xe-cores, depending on the source) sharing dual-channel DDR5-6400 RAM (2 × 8 B × 6400 MT/s ≈ 102 GB/s).
+  // TFLOPS: 3.9 from a comparison (precision unspecified, probably FP32); an order of magnitude.
+  // Max capacity: 2 × 48 GB SO-DIMM = 96 GB per manufacturer/reseller sheets.
+  ['ASUS NUC 15 Pro (Core Ultra 5 225H, Arc iGPU)', 102.4, 3.9, 'intel'],
+];
+
+// Unified memory: a single "GPU" that sees all of it. GPU limit = manual setting, otherwise the macOS default.
+function macGpu(s) {
+  const p = UNIFIED_PRESETS[s.mac.preset], mem = s.mac.mem;
+  const limit = s.mac.wired > 0 ? s.mac.wired : mem * (mem <= 36 ? 2 / 3 : 3 / 4);
+  return { kind: 'gpu', idx: 0, name: p[0], vendor: p[3] ?? 'apple', cap: Math.min(limit, mem), total: mem,
+           bw: p[1], tflops: p[2], pcie: p[1], pcieLabel: 'unified memory' };
+}
+
+// label, bpw, [native format required to offer it]. Sorted from highest to lowest precision; index 0 = manual bpw.
+const QUANTS = [
+  ['Custom', null], ['FP16 / BF16', 16], ['Q8_0', 8.5], ['Q6_K', 6.56], ['Q5_K_M', 5.69],
+  ['Q4_K_M', 4.85], ['Q4_0', 4.55], ['MXFP4 (gpt-oss)', 4.25, 'mxfp4'], ['IQ4_XS', 4.25], ['Q3_K_M', 3.91],
+  ['IQ3_XXS', 3.06], ['Q2_K', 2.96], ['IQ2_XXS', 2.06], ['IQ1_S', 1.56],
+];
+const quantIdx = name => QUANTS.findIndex(q => q[0] === name);
+// A quantization is offered only if it does not exceed the precision the model was released in
+function quantAllowed(i) {
+  const q = QUANTS[i], nat = state.modelPreset > 0 ? NATIVE[state.modelName] : null;
+  if (!q[1]) return false;
+  if (q[2] && state.modelPreset > 0 && q[2] !== nat) return false;
+  return q[1] <= (nat ? NATIVE_INFO[nat][1] : 16) + 1e-9;
+}
+
+function gpuFromPreset(i) {
+  const p = GPU_PRESETS[i];
+  return { preset: i, name: p[0], vendor: p[1], vram: p[2], bw: p[3], tflops: p[4], gen: p[5], lanes: p[6],
+           slotGen: p[5], slotLanes: p[6], reserve: 0.8 };
+}
+const presetIdx = name => GPU_PRESETS.findIndex(p => p[0] === name);
+
+function defaultState() {
+  const modelName = 'Qwen3.8 27B (dense, hybrid)', quant = 'Q4_K_M';
+  const mi = MODEL_PRESETS.findIndex(p => p[0] === modelName), p = MODEL_PRESETS[mi];
+  return {
+    advanced: false,
+    modelPreset: mi, modelName,
+    quantPreset: quantIdx(quant),
+    model: { total: p[1], active: p[2], dense: p[3], layers: p[4], hidden: p[5], kvHeads: p[6], headDim: p[7],
+             bpw: QUANTS[quantIdx(quant)][1],
+             swaLayers: p[8] ?? 0, swaWindow: p[9] ?? 0, swaKvHeads: p[10] ?? 0, swaHeadDim: p[11] ?? 0 },
+    ctxAlloc: 32768, ctxFill: 8192, kvType: 'f16',
+    gpus: [gpuFromPreset(presetIdx('RX 7900 XT 20 GB'))],
+    ram: { size: 64, reserve: 8, type: 'DDR5', mts: 5600, channels: 2 },
+    cpuGflops: 600, diskBw: 3.5,
+    mode: 'pc', mac: { preset: 13, mem: 32, wired: 0 },
+    drafter: { on: false, params: 0.4, k: 4, alpha: 0.7, verify: 0.1 },
+    placement: 'moe', order: 'bw',
+    effGpu: 0.7, effRam: 0.7, pcieEff: 0.8, effPP: 0.4, latencyUs: 40, ubatch: 512,
+  };
+}
+
+const STORE = 'llm-tps-calc-v2';
+let state;
+try { state = JSON.parse(localStorage.getItem(STORE)) || defaultState(); } catch (e) { state = defaultState(); }
+// Preset indexes depend on list order: resolve them again from the saved names
+state.modelPreset = Math.max(0, MODEL_PRESETS.findIndex(p => p[0] === state.modelName));
+state.modelName = MODEL_PRESETS[state.modelPreset][0];
+state.gpus.forEach(g => { g.preset = Math.max(0, presetIdx(g.name)); });
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} };
+
+const getPath = (o, p) => p.split('.').reduce((a, k) => a[k], o);
+function setPath(o, p, v) { const ks = p.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; }
+
+// ---------- model ----------
+function compute(s, override = {}) {
+  const ctxFill = override.ctxFill ?? s.ctxFill;
+  const m = s.model, gbPerB = m.bpw / 8;
+  const dense = Math.min(m.dense, m.total);
+  const denseGB = dense * gbPerB;
+  const expGB = Math.max(0, m.total - dense) * gbPerB;
+  const fAct = m.total > dense ? clamp((m.active - dense) / (m.total - dense), 0, 1) : 0;
+  // KV: full-attention layers (whole context) + sliding-window layers (bounded by the window)
+  const kvB = KV_BYTES[s.kvType];
+  const swaLayers = m.swaLayers ?? 0, swaWin = m.swaWindow ?? 0;
+  const kvFullGB = 2 * m.kvHeads * m.headDim * m.layers * s.ctxAlloc * kvB / 1e9;
+  const kvSwaGB = swaLayers > 0 && swaWin > 0
+    ? 2 * m.swaKvHeads * m.swaHeadDim * swaLayers * Math.min(s.ctxAlloc, swaWin) * kvB / 1e9 : 0;
+  const kvGB = kvFullGB + kvSwaGB;
+  const drafterGB = s.drafter.on ? (s.drafter.params || 0) * gbPerB : 0;
+  const fillRatio = s.ctxAlloc > 0 ? Math.min(1, ctxFill / s.ctxAlloc) : 0;
+  const swaFill = Math.min(ctxFill, swaWin) / Math.min(s.ctxAlloc, swaWin || 1);
+  // fraction of the KV cache actually re-read for each token
+  const kvFrac = kvGB > 0 ? (kvFullGB * fillRatio + kvSwaGB * Math.min(1, swaFill)) / kvGB : 0;
+
+  const mac = s.mode === 'mac';
+  let gpus = mac ? [macGpu(s)] : s.gpus.map((g, i) => ({
+    kind: 'gpu', idx: i, name: g.name || `GPU ${i + 1}`, vendor: g.vendor, cap: Math.max(0, g.vram - g.reserve), total: g.vram,
+    bw: g.bw, tflops: g.tflops,
+    pcie: PCIE_LANE[Math.min(g.gen, g.slotGen)] * Math.min(g.lanes, g.slotLanes) * s.pcieEff,
+    pcieLabel: `Gen${Math.min(g.gen, g.slotGen)} x${Math.min(g.lanes, g.slotLanes)}`,
+  }));
+  const ordered = s.order === 'bw' ? [...gpus].sort((a, b) => b.bw - a.bw) : gpus;
+  const ramBw = mac ? 0 : s.ram.channels * 8 * s.ram.mts / 1000;
+  // Unified memory: no separate RAM (cap 0), so any overflow goes straight to disk
+  const ram = mac ? { kind: 'ram', name: 'System RAM', cap: 0, total: 0, bw: 0 }
+    : { kind: 'ram', name: 'System RAM', cap: Math.max(0, s.ram.size - s.ram.reserve), total: s.ram.size, bw: ramBw };
+  const disk = { kind: 'disk', name: 'Disk (mmap)', cap: Infinity, total: 0, bw: s.diskBw };
+  const devs = [...ordered, ram, disk];
+  devs.forEach(d => Object.assign(d, { dense: 0, exp: 0, kv: 0, draft: 0, used: 0 }));
+
+  const fill = (amount, put) => {
+    for (const d of devs) {
+      if (amount <= 1e-12) break;
+      const take = Math.min(amount, d.cap - d.used);
+      if (take <= 0) continue;
+      d.used += take; amount -= take; put(d, take);
+    }
+  };
+  const attnGB = denseGB + kvGB;
+  if (s.placement === 'moe') {
+    fill(attnGB, (d, t) => { d.dense += t * denseGB / attnGB; d.kv += t * kvGB / attnGB; });
+    fill(drafterGB, (d, t) => { d.draft += t; }); // MTP drafter: right after attention, on the same device
+    fill(expGB, (d, t) => { d.exp += t; });
+  } else {
+    const all = attnGB + expGB;
+    fill(all, (d, t) => { d.dense += t * denseGB / all; d.kv += t * kvGB / all; d.exp += t * expGB / all; });
+    fill(drafterGB, (d, t) => { d.draft += t; });
+  }
+
+  // generation: time per device
+  for (const d of devs) {
+    d.a = attnGB > 0 ? (d.dense + d.kv) / attnGB : 0;
+    d.e = expGB > 0 ? d.exp / expGB : 0;
+    d.read = d.dense + d.exp * fAct + d.kv * kvFrac;
+    const eff = d.kind === 'gpu' ? s.effGpu : d.kind === 'ram' ? s.effRam : 1;
+    d.tMem = d.bw > 0 ? d.read / (d.bw * eff) : (d.read > 0 ? Infinity : 0);
+    d.tMemIdeal = d.bw > 0 ? d.read / d.bw : (d.read > 0 ? Infinity : 0);
+    d.paramsActive = (d.dense + d.exp * fAct) / gbPerB; // in B
+    d.tCpu = d.kind !== 'gpu' && d.read > 0 ? 2 * d.paramsActive / s.cpuGflops : 0;
+    d.t = Math.max(d.tMem, d.tCpu);
+    d.cpuBound = d.tCpu > d.tMem;
+  }
+
+  // transfers
+  const actBytes = m.hidden * 4;
+  const hop = (pcie) => s.latencyUs * 1e-6 + actBytes / (pcie * 1e9);
+  const hopIdeal = (pcie) => actBytes / (pcie * 1e9);
+  let tComm = 0, tCommIdeal = 0, hops = 0;
+  const linkBw = (x, y) => {
+    if (x.kind === 'gpu' && y.kind === 'gpu') return Math.min(x.pcie, y.pcie);
+    if (x.kind === 'gpu') return x.pcie;
+    if (y.kind === 'gpu') return y.pcie;
+    return Infinity; // RAM <-> disk: same CPU process
+  };
+  const addHops = (n, bw) => {
+    if (n <= 0 || bw === Infinity) return;
+    hops += n; tComm += n * hop(bw); tCommIdeal += n * hopIdeal(bw);
+  };
+  const seq = devs.filter(d => (s.placement === 'moe' ? d.a : d.used) > 1e-9);
+  for (let i = 1; i < seq.length; i++) addHops(1, linkBw(seq[i - 1], seq[i]));
+  if (s.placement === 'moe' && expGB > 0) {
+    for (const g of devs) {
+      if (g.a <= 1e-9) continue;
+      const mis = g.a - Math.min(g.a, g.e);
+      const others = 1 - g.e;
+      if (mis <= 1e-9 || others <= 1e-9) continue;
+      for (const d of devs) {
+        if (d === g || d.e <= 1e-9) continue;
+        addHops(2 * m.layers * mis * d.e / others, linkBw(g, d));
+      }
+    }
+  }
+
+  const tDev = devs.reduce((a, d) => a + d.t, 0);
+  const T = tDev + tComm;
+  const Tideal = devs.reduce((a, d) => a + d.tMemIdeal, 0) + tCommIdeal;
+
+  // prefill
+  const attnFlopsPerTok = 4 * m.layers * m.hidden * (ctxFill / 2) / 1e9; // GFLOP
+  let tPPgpu = 0;
+  for (const d of devs.filter(d => d.kind === 'gpu')) {
+    const gflop = 2 * d.paramsActive + attnFlopsPerTok * d.a;
+    if (gflop > 0) tPPgpu += gflop / (d.tflops * 1e3 * s.effPP);
+  }
+  const off = devs.filter(d => d.kind !== 'gpu');
+  const offGB = off.reduce((a, d) => a + d.dense + d.exp, 0);
+  const offGflop = off.reduce((a, d) => a + 2 * d.paramsActive + attnFlopsPerTok * d.a, 0);
+  let tPPoff = 0, ppMode = '—';
+  if (offGB > 0 || offGflop > 0) {
+    const tCpu = offGflop / (s.cpuGflops * Math.max(s.effPP, 0.5));
+    const main = gpus[0];
+    let tStream = Infinity;
+    if (main) {
+      tStream = offGB / (main.pcie * s.ubatch) + offGflop / (main.tflops * 1e3 * s.effPP)
+              + (disk.used > 0 ? disk.used / (disk.bw * s.ubatch) : 0);
+    }
+    if (tStream < tCpu) { tPPoff = tStream; ppMode = `RAM-resident weights streamed to ${main.name} (${main.pcieLabel})`; }
+    else { tPPoff = tCpu; ppMode = 'RAM-resident part computed on the CPU'; }
+  }
+  const tPP = tPPgpu + tPPoff;
+
+  // MTP: the drafter proposes k tokens (reading its weights from the device that holds them), the target verifies k+1 positions in one pass
+  let spec = null;
+  const dr = devs.find(d => d.draft > 1e-9);
+  if (drafterGB > 0 && dr && dr.bw > 0) {
+    const k = Math.max(1, Math.round(s.drafter.k)), a = clamp(s.drafter.alpha, 0, 0.99);
+    const tDraft = drafterGB / (dr.bw * (dr.kind === 'gpu' ? s.effGpu : s.effRam));
+    const accepted = (1 - a ** (k + 1)) / (1 - a); // tokens produced per cycle, including the correction token
+    const cycle = T * (1 + s.drafter.verify * k) + k * tDraft;
+    spec = { tps: accepted / cycle, accepted, k, a, tDraft };
+  }
+
+  return { devs, gpus, ram, disk, denseGB, expGB, kvGB, drafterGB, fAct, fillRatio, tDev, tComm, hops, T, Tideal, spec,
+           tps: 1 / T, tpsIdeal: 1 / Tideal, ppTps: tPP > 0 ? 1 / tPP : Infinity, tPPoff, tPPgpu, ppMode, ramBw };
+}
+
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const fmt = (x, d = 1) => !isFinite(x) ? '∞' : x.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmtT = sec => sec < 1 ? `${fmt(sec * 1000, 2)} ms` : sec < 120 ? `${fmt(sec, 1)} s` : `${fmt(sec / 60, 1)} min`;
+
+// ---------- rendering ----------
+const opts = (vals, cur) => vals.map(v => `<option ${v === cur ? 'selected' : ''}>${v}</option>`).join('');
+function gpuOptions(cur) {
+  const opt = (p, j) => `<option value="${j}" ${j === cur ? 'selected' : ''}>${p[0]}</option>`;
+  return opt(GPU_PRESETS[0], 0) + GPU_GROUPS.map(([label], gi) =>
+    `<optgroup label="${label}">${GPU_PRESETS.map((p, j) => p[7] === gi ? opt(p, j) : '').join('')}</optgroup>`).join('');
+}
+function renderGpus() {
+  const box = document.getElementById('gpus');
+  // A custom GPU has no preset to rely on: its fields stay visible even with advanced settings off
+  box.innerHTML = state.gpus.map((g, i) => `
+    <div class="gpu">
+      <div class="gpu-head">
+        <label>GPU ${i + 1}<select data-g="${i}" data-f="preset">${gpuOptions(g.preset)}</select></label>
+        <button data-del="${i}" title="Remove" aria-label="Remove GPU ${i + 1}">✕</button>
+      </div>
+      ${g.preset ? `<p class="hint">${fmt(g.vram, 0)} GB VRAM · ${fmt(g.bw, 0)} GB/s · PCIe ${linkText(g)}</p>` : ''}
+      <div class="grid g3 ${g.preset ? 'adv' : ''}">
+        <label>VRAM (GB)<input type="number" step="1" data-g="${i}" data-f="vram" value="${g.vram}"></label>
+        <label>Memory bandwidth (GB/s)<input type="number" step="1" data-g="${i}" data-f="bw" value="${g.bw}"></label>
+        <label>TFLOPS FP16<input type="number" step="1" data-g="${i}" data-f="tflops" value="${g.tflops}"></label>
+        <label>GPU PCIe (gen)<select data-g="${i}" data-f="gen">${opts([2, 3, 4, 5], g.gen)}</select></label>
+        <label>GPU lanes<select data-g="${i}" data-f="lanes">${opts([1, 4, 8, 16], g.lanes)}</select></label>
+        <label>VRAM reserve (GB)<input type="number" step="0.1" data-g="${i}" data-f="reserve" value="${g.reserve}"></label>
+        <label>Slot (gen)<select data-g="${i}" data-f="slotGen">${opts([2, 3, 4, 5], g.slotGen)}</select></label>
+        <label>Slot (lanes)<select data-g="${i}" data-f="slotLanes">${opts([1, 4, 8, 16], g.slotLanes)}</select></label>
+        <label>Effective link<input type="text" disabled value="${linkText(g)}"></label>
+      </div>
+    </div>`).join('');
+}
+const linkText = g => { const gen = Math.min(g.gen, g.slotGen), l = Math.min(g.lanes, g.slotLanes);
+  return `Gen${gen} x${l} ≈ ${fmt(PCIE_LANE[gen] * l, 1)} GB/s`; };
+
+// Quantization list: only what makes sense for the selected model. Falls back to Q4_K_M (or the native format) when the current choice is not available.
+function renderQuants() {
+  if (state.quantPreset > 0 && !quantAllowed(state.quantPreset)) {
+    const q4 = quantIdx('Q4_K_M');
+    state.quantPreset = quantAllowed(q4) ? q4 : QUANTS.findIndex((_, i) => quantAllowed(i));
+    state.model.bpw = QUANTS[state.quantPreset][1];
+    document.querySelector('[data-k="model.bpw"]').value = state.model.bpw;
+  }
+  document.getElementById('quantPreset').innerHTML = QUANTS.map((q, i) =>
+    (i === 0 ? state.quantPreset === 0 : quantAllowed(i))
+      ? `<option value="${i}" ${i === state.quantPreset ? 'selected' : ''}>${q[0]} (${i ? q[1] : state.model.bpw} bpw)</option>` : '').join('');
+}
+
+function renderModelInfo() {
+  const m = state.model, nat = state.modelPreset > 0 ? NATIVE[state.modelName] : null;
+  const moe = m.active < m.total;
+  document.getElementById('modelInfo').textContent =
+    `${fmt(m.total, 1)} B parameters${moe ? `, ${fmt(m.active, 1)} B active per token` : ''} · ${fmt(m.total * m.bpw / 8, 1)} GB of weights.`
+    + (nat ? ` Released in ${NATIVE_INFO[nat][0]}: higher-precision formats are not offered.` : '');
+  // A custom model has no preset to rely on: its fields stay visible even with advanced settings off
+  document.getElementById('modelFields').classList.toggle('adv', state.modelPreset !== 0);
+}
+
+function renderStatic() {
+  document.getElementById('modelPreset').innerHTML = MODEL_PRESETS.map((p, i) =>
+    `<option value="${i}" ${i === state.modelPreset ? 'selected' : ''}>${p[0]}</option>`).join('');
+  document.getElementById('macPreset').innerHTML = UNIFIED_PRESETS.map((p, i) =>
+    `<option value="${i}" ${i === state.mac.preset ? 'selected' : ''}>${p[0]}</option>`).join('');
+  document.getElementById('hwMode').value = state.mode;
+  document.getElementById('advToggle').checked = !!state.advanced;
+  document.body.classList.toggle('show-adv', !!state.advanced);
+  document.querySelectorAll('[data-k]').forEach(el => { el.value = getPath(state, el.dataset.k); });
+  renderQuants();
+  renderGpus();
+  applyMode();
+}
+
+function applyMode() {
+  const mac = state.mode === 'mac';
+  document.getElementById('secGpu').style.display = mac ? 'none' : '';
+  document.getElementById('secRam').style.display = mac ? 'none' : '';
+  document.getElementById('secMac').style.display = mac ? '' : 'none';
+}
+
+function update() {
+  save();
+  renderModelInfo();
+  const r = compute(state);
+  document.getElementById('ramBwOut').value = `${fmt(r.ramBw, 1)} GB/s`;
+  const mp = UNIFIED_PRESETS[state.mac.preset];
+  document.getElementById('macBwOut').value = `${fmt(mp[1], 0)} GB/s`;
+  document.getElementById('macTflopsOut').value = `${fmt(mp[2], 1)} TFLOPS`;
+
+  const totalW = r.denseGB + r.expGB;
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi"><div class="l">Generation (estimated)</div><div class="v">${fmt(r.tps, 1)} tok/s</div><div class="s">${fmtT(r.T)} / token</div></div>
+    <div class="kpi adv"><div class="l">Theoretical ceiling (100% bandwidth, 0 latency)</div><div class="v">${fmt(r.tpsIdeal, 1)} tok/s</div></div>
+    <div class="kpi"><div class="l">Prompt processing (estimated)</div><div class="v">${fmt(r.ppTps, 0)} tok/s</div><div class="s">${state.ctxFill.toLocaleString('en-US')}-token prompt: ${fmtT(state.ctxFill / r.ppTps)}</div></div>
+    <div class="kpi"><div class="l">Memory required</div><div class="v">${fmt(totalW + r.kvGB + r.drafterGB, 1)} GB</div><div class="s">weights ${fmt(totalW, 1)} GB + KV ${fmt(r.kvGB, 2)} GB${r.drafterGB > 0 ? ` + MTP drafter ${fmt(r.drafterGB, 2)} GB` : ''}${r.expGB > 0 ? ` · ${fmt(r.fAct * 100, 1)}% of experts active` : ''}</div></div>`;
+
+  if (r.spec) document.getElementById('kpis').insertAdjacentHTML('afterbegin',
+    `<div class="kpi"><div class="l">With MTP (k=${r.spec.k}, α=${fmt(r.spec.a, 2)})</div><div class="v">${fmt(r.spec.tps, 1)} tok/s</div><div class="s">×${fmt(r.spec.tps / r.tps, 2)} vs without MTP · ${fmt(r.spec.accepted, 2)} tokens/cycle</div></div>`);
+
+  // messages
+  const msgs = [];
+  if (r.disk.used > 0.01) msgs.push(['err', `The model does not fit in VRAM + RAM: ${fmt(r.disk.used, 1)} GB would be read from disk (mmap). It works but becomes very slow.`]);
+  const vendors = new Set(state.mode === 'pc' ? state.gpus.map(g => g.vendor).filter(v => v !== 'other') : []);
+  if (vendors.size > 1) msgs.push(['warn', 'GPUs from different vendors: only llama.cpp\'s Vulkan backend (or RPC mode) can combine them in one process. Vulkan is often a bit less efficient than CUDA/ROCm: lower the GPU efficiency to 0.55–0.65 in the advanced settings.']);
+  for (const g of r.gpus) if (g.pcie / state.pcieEff < 4) msgs.push(['warn', `${g.name} on ${g.pcieLabel}: barely matters for pure generation, but slow for loading and for prompt processing if weights sit in RAM.`]);
+  if (state.ctxFill > state.ctxAlloc) msgs.push(['warn', 'Tokens in context exceed the context size (capped).']);
+  if (state.mode === 'pc' && state.ram.channels > 2 && state.ram.type !== 'LPDDR5X') msgs.push(['warn', `${state.ram.channels} memory channels: HEDT/server platforms only. A desktop PC with 4 DIMMs still has 2 channels.`]);
+  const unusedGpu = r.gpus.filter(g => g.used <= 1e-9);
+  if (unusedGpu.length && (r.ram.used > 0 || r.disk.used > 0)) msgs.push(['warn', `GPU with nothing on it: ${unusedGpu.map(g => g.name).join(', ')} (zero capacity?).`]);
+  if (unusedGpu.length && r.ram.used === 0 && r.disk.used === 0) msgs.push(['warn', `The model fits without ${unusedGpu.map(g => g.name).join(', ')}: this GPU is of no use here, except as storage for a longer context.`]);
+  if (r.devs.some(d => d.cpuBound)) msgs.push(['warn', 'The CPU part is compute-bound rather than RAM-bound: more CPU GFLOPS (more cores, AVX-512) would help.']);
+  if (r.ppMode !== '—') msgs.push(['info', `Prompt processing: ${r.ppMode}.`]);
+  document.getElementById('msgs').innerHTML = msgs.map(([k, t]) => `<div class="msg ${k === 'info' ? '' : k}" ${k === 'info' ? 'style="color:var(--muted);padding-left:0"' : ''}>${t}</div>`).join('');
+
+  // memory
+  const memDevs = r.devs.filter(d => d.kind !== 'disk' || d.used > 0);
+  document.getElementById('mem').innerHTML = memDevs.map(d => {
+    const scale = d.kind === 'disk' ? d.used : d.total;
+    const pct = x => scale > 0 ? (100 * x / scale) : 0;
+    const reserved = d.kind === 'disk' ? 0 : d.total - d.cap;
+    return `<div class="membar"><div>${d.name}</div>
+      <div class="bar"><div style="width:${pct(d.dense)}%;background:var(--c-dense)"></div><div style="width:${pct(d.exp)}%;background:var(--c-exp)"></div><div style="width:${pct(d.draft)}%;background:var(--c-draft)"></div><div style="width:${pct(d.kv)}%;background:var(--c-kv)"></div><div style="flex:1"></div><div style="width:${pct(reserved)}%;background:repeating-linear-gradient(45deg,var(--border) 0 4px,transparent 4px 8px)" title="reserved"></div></div>
+      <div class="r">${fmt(d.used, 1)} / ${d.kind === 'disk' ? '—' : fmt(d.total, 0)} GB</div></div>`;
+  }).join('');
+
+  // time
+  const parts = r.devs.filter(d => d.t > 0).map((d, i) => ({ name: d.name, t: d.t, color: d.kind === 'gpu' ? ['#2f6fde', '#4ea3e8', '#1f4fa8', '#7fb5ff'][i % 4] : d.kind === 'ram' ? '#e08a1e' : '#c0392b' }));
+  if (r.tComm > 0) parts.push({ name: `PCIe transfers (${fmt(r.hops, 0)} / token)`, t: r.tComm, color: 'var(--c-comm)' });
+  document.getElementById('timebar').innerHTML = parts.map(p => `<div style="width:${100 * p.t / r.T}%;background:${p.color}" title="${p.name}: ${fmtT(p.t)}"></div>`).join('');
+  document.getElementById('timelegend').innerHTML = parts.map(p => `<span><i style="background:${p.color}"></i>${p.name} ${fmt(100 * p.t / r.T, 0)}%</span>`).join('');
+
+  const rows = r.devs.filter(d => d.used > 0).map(d => `<tr>
+    <td>${d.name}</td><td>${fmt(d.dense, 2)}</td><td>${fmt(d.exp, 2)}</td><td>${fmt(d.kv, 2)}</td>
+    <td>${fmt(d.read, 2)}</td><td>${fmt(d.bw, 0)}</td><td>${d.kind === 'gpu' ? `${d.pcieLabel} (${fmt(d.pcie, 1)})` : '—'}</td>
+    <td>${fmtT(d.t)}${d.cpuBound ? ' (compute)' : ''}</td><td>${fmt(100 * d.t / r.T, 0)}%</td></tr>`).join('');
+  document.getElementById('devtable').innerHTML = `<thead><tr><th>Device</th><th>Dense GB</th><th>Experts GB</th><th>KV GB</th><th>Read/token GB</th><th>Bandwidth GB/s</th><th>PCIe (eff. GB/s)</th><th>Time/token</th><th>Share</th></tr></thead>
+    <tbody>${rows}<tr><td>Transfers (${fmt(r.hops, 0)} × ${state.latencyUs} µs + data)</td><td></td><td></td><td></td><td></td><td></td><td></td><td>${fmtT(r.tComm)}</td><td>${fmt(100 * r.tComm / r.T, 0)}%</td></tr></tbody>`;
+
+  renderChart();
+}
+
+function renderChart() {
+  const W = 640, H = 200, P = { l: 44, r: 10, t: 10, b: 28 };
+  const N = 24, max = state.ctxAlloc;
+  const pts = Array.from({ length: N + 1 }, (_, i) => { const c = max * i / N; return [c, compute(state, { ctxFill: c }).tps]; });
+  const yMax = Math.max(...pts.map(p => p[1])) * 1.1 || 1;
+  const x = c => P.l + (W - P.l - P.r) * c / (max || 1), y = v => H - P.b - (H - P.t - P.b) * v / yMax;
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join('');
+  const yt = [0, 0.25, 0.5, 0.75, 1].map(f => yMax * f);
+  const xt = [0, 0.25, 0.5, 0.75, 1].map(f => max * f);
+  const cur = compute(state).tps;
+  document.getElementById('chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="tok/s vs. context">
+    ${yt.map(v => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${P.l - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v, 0)}</text>`).join('')}
+    ${xt.map(c => `<text x="${x(c)}" y="${H - 8}" text-anchor="middle">${c >= 1000 ? fmt(c / 1000, 0) + 'k' : fmt(c, 0)}</text>`).join('')}
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <circle cx="${x(Math.min(state.ctxFill, max))}" cy="${y(cur)}" r="4" fill="var(--accent)"/>
+  </svg><p class="hint">tok/s (Y axis) against the number of tokens already in the context (X axis). The dot = tokens currently in context.</p>`;
+}
+
+// ---------- events ----------
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el.dataset.k) {
+    const v = el.dataset.k === 'drafter.on' ? el.value === 'true'
+      : el.type === 'number' ? parseFloat(el.value) || 0 : el.value;
+    setPath(state, el.dataset.k, v);
+    if (el.dataset.k === 'model.bpw') { state.quantPreset = 0; renderQuants(); }
+    else if (el.dataset.k.startsWith('model.')) {
+      state.modelPreset = 0; state.modelName = MODEL_PRESETS[0][0]; document.getElementById('modelPreset').value = 0;
+      renderQuants();
+    }
+    update();
+  } else if (el.dataset.g !== undefined) {
+    const i = +el.dataset.g, f = el.dataset.f;
+    if (f === 'preset') {
+      const keep = state.gpus[i];
+      state.gpus[i] = gpuFromPreset(+el.value);
+      state.gpus[i].reserve = keep.reserve;
+      // the slot belongs to the motherboard, not the card: keep it when the card changes
+      state.gpus[i].slotGen = keep.slotGen; state.gpus[i].slotLanes = keep.slotLanes;
+      renderGpus();
+    } else {
+      state.gpus[i][f] = parseFloat(el.value) || 0;
+      if (['vram', 'bw', 'tflops', 'gen', 'lanes'].includes(f) && state.gpus[i].preset) {
+        state.gpus[i].preset = 0; state.gpus[i].name += ' (modified)';
+      }
+      if (['gen', 'lanes', 'slotGen', 'slotLanes'].includes(f)) renderGpus();
+    }
+    update();
+  } else if (el.id === 'modelPreset') {
+    state.modelPreset = +el.value;
+    state.modelName = MODEL_PRESETS[state.modelPreset][0];
+    const p = MODEL_PRESETS[state.modelPreset];
+    if (state.modelPreset > 0) {
+      Object.assign(state.model, { total: p[1], active: p[2], dense: p[3], layers: p[4], hidden: p[5], kvHeads: p[6], headDim: p[7],
+        swaLayers: p[8] ?? 0, swaWindow: p[9] ?? 0, swaKvHeads: p[10] ?? 0, swaHeadDim: p[11] ?? 0 });
+      state.drafter.params = p[12] ?? 0;
+      document.querySelectorAll('[data-k^="drafter."]').forEach(x => { x.value = getPath(state, x.dataset.k); });
+      document.querySelectorAll('[data-k^="model."]').forEach(x => { x.value = getPath(state, x.dataset.k); });
+    }
+    renderQuants();
+    update();
+  } else if (el.id === 'hwMode') {
+    state.mode = el.value;
+    applyMode();
+    update();
+  } else if (el.id === 'macPreset') {
+    state.mac.preset = +el.value;
+    update();
+  } else if (el.id === 'quantPreset') {
+    state.quantPreset = +el.value;
+    const q = QUANTS[state.quantPreset];
+    if (q[1]) { state.model.bpw = q[1]; document.querySelector('[data-k="model.bpw"]').value = q[1]; }
+    renderQuants();
+    update();
+  } else if (el.id === 'advToggle') {
+    state.advanced = el.checked;
+    document.body.classList.toggle('show-adv', state.advanced);
+    save();
+  }
+});
+document.addEventListener('click', e => {
+  if (e.target.dataset.del !== undefined) { state.gpus.splice(+e.target.dataset.del, 1); renderGpus(); update(); }
+});
+document.getElementById('addGpu').onclick = () => { state.gpus.push(gpuFromPreset(presetIdx('RTX 3090 24 GB'))); renderGpus(); update(); };
+// Reset restores the defaults but keeps the advanced-settings toggle as it is
+document.getElementById('reset').onclick = () => { state = { ...defaultState(), advanced: state.advanced }; renderStatic(); update(); };
+
+renderStatic();
+update();
+</script>
+</body>
+</html>
